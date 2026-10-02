@@ -1,0 +1,69 @@
+Created At: 2026-10-03T04:02:39+06:00
+Completed At: 2026-10-03T04:02:42+06:00
+The following changes were made by the multi_replace_file_content tool to: /Users/MacBookPro/Downloads/nodelab/src/App.tsx. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -400,6 +400,37 @@
+   )
+ }
+ 
++function ClickIndicator({ position }: { position: [number, number, number] }) {
++  const ref = useRef<THREE.Group>(null)
++  
++  useFrame((state) => {
++    if (ref.current) {
++      ref.current.position.y = position[1] + Math.sin(state.clock.elapsedTime * 4) * 0.05
++    }
++  })
++
++  return (
++    <group ref={ref} position={position}>
++      <Html transform center scale={0.06}>
++        <div style={{
++          background: '#f1c40f',
++          color: '#2c3e50',
++          padding: '4px 8px',
++          borderRadius: '4px',
++          fontWeight: 'bold',
++          fontSize: '12px',
++          pointerEvents: 'none',
++          border: '2px solid #f39c12',
++          boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
++          animation: 'pulse-btn 1.5s infinite'
++        }}>
++          👇 CLICK HERE
++        </div>
++      </Html>
++    </group>
++  )
++}
++
+ function Whiteboard({ position, setAssistantMessage }: any) {
+   const [missionActive, setMissionActive] = useState(false)
+ 
+@@ -460,6 +460,11 @@
+           )}
+         </div>
+       </Html>
++
++      {/* Floating Click Indicator when pending */}
++      {!missionActive && (
++        <ClickIndicator position={[0, 1.2, 0.1]} />
++      )}
+     </group>
+   )
+ }
+@@ -950,6 +950,11 @@
+           </div>
+         </div>
+       </Html>
++      
++      {/* Click Indicator for the Solar Still */}
++      {stage !== 3 && (
++        <ClickIndicator position={[0, 0.6, 0]} />
++      )}
+     </group>
+   )
+ }
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not shown.

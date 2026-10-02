@@ -1,0 +1,889 @@
+import { useState, useEffect, useRef } from 'react'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import { Box, Sphere, Cylinder, Cone, Environment, Html, Grid, PointerLockControls } from '@react-three/drei'
+import * as THREE from 'three'
+import { LineChart, Line } from 'recharts'
+import { useDrag } from '@use-gesture/react'
+
+// --- AUDIO SYSTEM ---
+const playSound = (type: 'click' | 'success') => {
+  const AudioContext = window.AudioContext || (window as any).webkitAudioContext
+  if (!AudioContext) return
+  const ctx = new AudioContext()
+  const osc = ctx.createOscillator()
+  const gain = ctx.createGain()
+  osc.connect(gain)
+  gain.connect(ctx.destination)
+
+  if (type === 'click') {
+    osc.type = 'square'
+    osc.frequency.setValueAtTime(400, ctx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.1)
+    gain.gain.setValueAtTime(0.05, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1)
+    osc.start()
+    osc.stop(ctx.currentTime + 0.1)
+  } else if (type === 'success') {
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(523.25, ctx.currentTime) // C5
+    osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.1) // E5
+    osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.2) // G5
+    gain.gain.setValueAtTime(0.1, ctx.currentTime)
+    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5)
+    osc.start()
+    osc.stop(ctx.currentTime + 0.5)
+  }
+}
+
+
+
+// --- MOVEMENT STATE ---
+const movementState = { forward: false, backward: false, left: false, right: false }
+
+function usePersonControls() {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      switch (e.code) {
+        case 'KeyW': case 'ArrowUp': movementState.forward = true; break
+        case 'KeyS': case 'ArrowDown': movementState.backward = true; break
+        case 'KeyA': case 'ArrowLeft': movementState.left = true; break
+        case 'KeyD': case 'ArrowRight': movementState.right = true; break
+      }
+    }
+    const handleKeyUp = (e: KeyboardEvent) => {
+      switch (e.code) {
+        case 'KeyW': case 'ArrowUp': movementState.forward = false; break
+        case 'KeyS': case 'ArrowDown': movementState.backward = false; break
+        case 'KeyA': case 'ArrowLeft': movementState.left = false; break
+        case 'KeyD': case 'ArrowRight': movementState.right = false; break
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    document.addEventListener('keyup', handleKeyUp)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [])
+}
+
+// --- PLAYER COMPONENT ---
+function Player() {
+  usePersonControls()
+  const { camera } = useThree()
+  const velocity = useRef(new THREE.Vector3())
+
+  useEffect(() => {
+    // Face the lab from the outside starting position
+    camera.rotation.set(0, Math.PI, 0)
+  }, [camera])
+
+  const maxSpeed = 3.0 // Reduced for more realistic walking
+  const acceleration = 30.0
+  const friction = 10.0
+
+  useFrame((_, delta) => {
+
+    const { forward, backward, left, right } = movementState
+
+    // Mathematically bulletproof forward/right vectors based on actual camera orientation
+    const forwardVector = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion)
+    forwardVector.y = 0
+    if (forwardVector.lengthSq() > 0) forwardVector.normalize()
+
+    const rightVector = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion)
+    rightVector.y = 0
+    if (rightVector.lengthSq() > 0) rightVector.normalize()
+
+    const inputDirection = new THREE.Vector3()
+    if (forward) inputDirection.add(forwardVector)
+    if (backward) inputDirection.sub(forwardVector)
+    if (right) inputDirection.add(rightVector)
+    if (left) inputDirection.sub(rightVector)
+
+    if (inputDirection.lengthSq() > 0) {
+      inputDirection.normalize()
+      velocity.current.add(inputDirection.multiplyScalar(acceleration * delta))
+    }
+
+    // Apply frame-rate independent friction (damping) to prevent velocity flipping on lag
+    const damping = Math.exp(-friction * delta)
+    velocity.current.x *= damping
+    velocity.current.z *= damping
+
+    // Clamp velocity to max speed
+    if (velocity.current.lengthSq() > maxSpeed * maxSpeed) {
+      velocity.current.normalize().multiplyScalar(maxSpeed)
+    }
+
+    camera.position.x += velocity.current.x * delta
+    camera.position.z += velocity.current.z * delta
+    camera.position.y = 1.6
+
+    // Limits
+    if (camera.position.x > 6.5) { camera.position.x = 6.5; velocity.current.x = 0; }
+    if (camera.position.x < -6.5) { camera.position.x = -6.5; velocity.current.x = 0; }
+    if (camera.position.z > 4.5) { camera.position.z = 4.5; velocity.current.z = 0; }
+    if (camera.position.z < -4.5) { camera.position.z = -4.5; velocity.current.z = 0; } // Wall boundary
+
+    // Allow player to lean over the table
+    const tableMinX = -2.5
+    const tableMaxX = 2.5
+    const tableMinZ = -2.5
+    const tableMaxZ = -1.2
+
+    if (camera.position.x > tableMinX && camera.position.x < tableMaxX &&
+        camera.position.z > tableMinZ && camera.position.z < tableMaxZ) {
+      
+      const distMinX = Math.abs(camera.position.x - tableMinX)
+      const distMaxX = Math.abs(camera.position.x - tableMaxX)
+      const distMinZ = Math.abs(camera.position.z - tableMinZ)
+      const distMaxZ = Math.abs(camera.position.z - tableMaxZ)
+      
+      const minDist = Math.min(distMinX, distMaxX, distMinZ, distMaxZ)
+      
+      if (minDist === distMinZ) {
+        camera.position.z = tableMinZ
+        velocity.current.z = 0
+      } else if (minDist === distMaxZ) {
+        camera.position.z = tableMaxZ
+        velocity.current.z = 0
+      } else if (minDist === distMinX) {
+        camera.position.x = tableMinX
+        velocity.current.x = 0
+      } else if (minDist === distMaxX) {
+        camera.position.x = tableMaxX
+        velocity.current.x = 0
+      }
+    }
+  })
+
+  return null
+}
+
+// --- MOBILE TOUCH CONTROLS ---
+function MobileControls() {
+  const { camera } = useThree()
+
+  const bindLook = useDrag(({ delta: [dx, dy] }) => {
+    const euler = new THREE.Euler(0, 0, 0, 'YXZ')
+    euler.copy(camera.rotation)
+    euler.y -= dx * 0.005
+    euler.x -= dy * 0.005
+    euler.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.x))
+    camera.rotation.copy(euler)
+  })
+
+  const btnStyle = { background: 'rgba(255,255,255,0.2)', border: '1px solid white', borderRadius: '50%', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '20px', userSelect: 'none', touchAction: 'none' }
+
+  return (
+    <Html fullscreen zIndexRange={[100, 0]}>
+      <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
+        <div {...(bindLook as any)()} style={{ position: 'absolute', top: 0, right: 0, width: '50%', height: '100%', pointerEvents: 'auto', touchAction: 'none' }} />
+        <div style={{ position: 'absolute', bottom: '40px', left: '40px', width: '180px', height: '180px', pointerEvents: 'auto' }}>
+          <div
+            onPointerDown={() => movementState.forward = true} onPointerUp={() => movementState.forward = false} onPointerOut={() => movementState.forward = false}
+            style={{ ...btnStyle, position: 'absolute', top: 0, left: '60px', width: '60px', height: '60px' } as any}>W</div>
+          <div
+            onPointerDown={() => movementState.backward = true} onPointerUp={() => movementState.backward = false} onPointerOut={() => movementState.backward = false}
+            style={{ ...btnStyle, position: 'absolute', bottom: 0, left: '60px', width: '60px', height: '60px' } as any}>S</div>
+          <div
+            onPointerDown={() => movementState.left = true} onPointerUp={() => movementState.left = false} onPointerOut={() => movementState.left = false}
+            style={{ ...btnStyle, position: 'absolute', top: '60px', left: 0, width: '60px', height: '60px' } as any}>A</div>
+          <div
+            onPointerDown={() => movementState.right = true} onPointerUp={() => movementState.right = false} onPointerOut={() => movementState.right = false}
+            style={{ ...btnStyle, position: 'absolute', top: '60px', right: 0, width: '60px', height: '60px' } as any}>D</div>
+        </div>
+      </div>
+    </Html>
+  )
+}
+
+function Oscilloscope({ position, rotation = [0, 0, 0], currentVal, onInfo }: any) {
+  return (
+    <group position={position} rotation={rotation} onClick={(e) => { e.stopPropagation(); onInfo && onInfo('Oscilloscope: Analyzes and displays electronic signals. The waveform visualizes voltage over time.') }}>
+      {/* Body */}
+      <Box position={[0, 0.15, 0]} args={[0.4, 0.3, 0.3]} castShadow><meshStandardMaterial color="#ecf0f1" /></Box>
+      {/* Screen */}
+      <Box position={[-0.05, 0.15, 0.151]} args={[0.2, 0.2, 0.01]}>
+        <meshBasicMaterial color="#00b894" />
+      </Box>
+      {/* Waveform (simulated with a thin box that moves with current) */}
+      <Box position={[-0.05, 0.15 + (currentVal ? (currentVal / 900) * 0.08 : 0), 0.155]} args={[0.15, 0.01, 0.01]} rotation={[0, 0, currentVal ? Math.PI / 12 : 0]}>
+        <meshBasicMaterial color="#ffffff" />
+      </Box>
+      {/* Knobs */}
+      <Cylinder position={[0.12, 0.2, 0.15]} args={[0.02, 0.02, 0.02]} rotation={[Math.PI / 2, 0, 0]}><meshStandardMaterial color="#2d3436" /></Cylinder>
+      <Cylinder position={[0.12, 0.1, 0.15]} args={[0.02, 0.02, 0.02]} rotation={[Math.PI / 2, 0, 0]}><meshStandardMaterial color="#2d3436" /></Cylinder>
+    </group>
+  )
+}
+
+function PowerSupply({ position, rotation = [0, 0, 0], onInfo }: any) {
+  return (
+    <group position={position} rotation={rotation} onClick={(e) => { e.stopPropagation(); onInfo && onInfo('Bench Power Supply: Delivers clean DC voltage to circuits with current limiting protection.') }}>
+      <Box position={[0, 0.1, 0]} args={[0.3, 0.2, 0.2]} castShadow><meshStandardMaterial color="#7f8c8d" /></Box>
+      {/* Display */}
+      <Box position={[0, 0.15, 0.101]} args={[0.15, 0.08, 0.01]}><meshBasicMaterial color="#c0392b" /></Box>
+      {/* Terminals */}
+      <Cylinder position={[-0.05, 0.05, 0.1]} args={[0.01, 0.01, 0.02]} rotation={[Math.PI / 2, 0, 0]}><meshStandardMaterial color="#e74c3c" /></Cylinder>
+      <Cylinder position={[0.05, 0.05, 0.1]} args={[0.01, 0.01, 0.02]} rotation={[Math.PI / 2, 0, 0]}><meshStandardMaterial color="#2c3e50" /></Cylinder>
+    </group>
+  )
+}
+
+function ChemistryCorner({ position, rotation, onInfo }: any) {
+  
+  const [stirring, setStirring] = useState(false)
+  const stirrerRef = useRef<THREE.Mesh>(null)
+  
+  const [scaleWeight, setScaleWeight] = useState("0.000")
+
+  useFrame((_, delta) => {
+    if (stirring && stirrerRef.current) {
+      stirrerRef.current.rotation.y += delta * 15
+    }
+  })
+
+  const handleScaleClick = (e: any) => {
+    e.stopPropagation()
+    const w = (Math.random() * 50).toFixed(3)
+    setScaleWeight(w)
+    onInfo && onInfo(`Precision Scale: Measured ${w}g of sample.`)
+  }
+
+  return (
+    <group position={position} rotation={rotation}>
+      {/* Banner */}
+      <Html transform position={[0, 1.5, -0.41]} scale={0.1}>
+        <div style={{ background: '#e74c3c', color: 'white', padding: '10px 30px', borderRadius: '10px', fontSize: '40px', fontWeight: 'bold', border: '4px solid #c0392b' }}>CHEMISTRY LAB</div>
+      </Html>
+
+      {/* Table */}
+      <Box position={[0, 0.45, 0]} args={[3, 0.05, 0.8]} castShadow><meshStandardMaterial color="#ecf0f1" /></Box>
+      <Box position={[-1.4, 0.225, 0]} args={[0.05, 0.45, 0.6]} castShadow><meshStandardMaterial color="#2d3436" /></Box>
+      <Box position={[1.4, 0.225, 0]} args={[0.05, 0.45, 0.6]} castShadow><meshStandardMaterial color="#2d3436" /></Box>
+
+      {/* Solar Still Experiment */}
+      <SolarStill position={[-0.8, 0.475, 0]} onInfo={onInfo} />
+
+
+      {/* Precision Scale */}
+      <group position={[0, 0.475, 0]} onClick={handleScaleClick}>
+        <Box position={[0, 0.04, 0]} args={[0.2, 0.08, 0.2]}><meshStandardMaterial color="#bdc3c7" /></Box>
+        <Cylinder position={[0, 0.08, 0]} args={[0.08, 0.08, 0.01]}><meshStandardMaterial color="#7f8c8d" /></Cylinder>
+        <Box position={[0, 0.04, 0.08]} args={[0.1, 0.04, 0.01]}><meshBasicMaterial color="#2ecc71" /></Box>
+        <Html transform position={[0, 0.04, 0.086]} scale={0.005}>
+          <div style={{ background: 'black', color: '#2ecc71', padding: '2px', fontFamily: 'monospace' }}>{scaleWeight}g</div>
+        </Html>
+      </group>
+
+      {/* Magnetic Stirrer */}
+      <group position={[0.8, 0.475, -0.2]} onClick={(e) => { e.stopPropagation(); setStirring(!stirring); onInfo && onInfo(stirring ? 'Magnetic Stirrer OFF.' : 'Magnetic Stirrer ON.') }}>
+        <Box position={[0, 0.05, 0]} args={[0.3, 0.1, 0.3]}><meshStandardMaterial color="#ecf0f1" /></Box>
+        <Cylinder position={[0, 0.1, 0]} args={[0.12, 0.12, 0.02]}><meshStandardMaterial color="#bdc3c7" /></Cylinder>
+        
+        {/* Beaker with liquid and stirrer bar */}
+        <Cylinder position={[0, 0.18, 0]} args={[0.08, 0.08, 0.15]}><meshPhysicalMaterial color={stirring ? "#e67e22" : "#f1c40f"} transmission={0.5} opacity={0.8} transparent /></Cylinder>
+        <Box ref={stirrerRef} position={[0, 0.11, 0]} args={[0.06, 0.01, 0.01]}><meshStandardMaterial color="#fff" /></Box>
+      </group>
+    </group>
+  )
+}
+
+function Telescope({ position, rotation = [0, 0, 0], onInfo }: any) {
+  const [active, setActive] = useState(false)
+  const tubeRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (active && tubeRef.current) {
+      // Slowly rotate the telescope to "scan the skies"
+      tubeRef.current.rotation.y = Math.sin(state.clock.elapsedTime * 0.5) * 0.3
+      tubeRef.current.rotation.z = Math.PI / 4 + Math.sin(state.clock.elapsedTime * 0.2) * 0.1
+    }
+  })
+
+  return (
+    <group position={position} rotation={rotation} onClick={(e) => {
+      e.stopPropagation();
+      setActive(!active);
+      onInfo && onInfo(active ? 'Telescope: Tracking disabled. Calibrating lens.' : 'Telescope: Tracking enabled. Scanning the celestial bodies.')
+    }}>
+      {/* Tripod Base */}
+      <Cylinder position={[0, 0.15, 0]} args={[0.02, 0.05, 0.3]}><meshStandardMaterial color="#2d3436" /></Cylinder>
+      {/* Tripod Legs */}
+      <Cylinder position={[0.1, 0.1, 0]} args={[0.01, 0.01, 0.3]} rotation={[0, 0, -Math.PI / 8]}><meshStandardMaterial color="#bdc3c7" /></Cylinder>
+      <Cylinder position={[-0.05, 0.1, 0.08]} args={[0.01, 0.01, 0.3]} rotation={[Math.PI / 8, 0, Math.PI / 16]}><meshStandardMaterial color="#bdc3c7" /></Cylinder>
+      <Cylinder position={[-0.05, 0.1, -0.08]} args={[0.01, 0.01, 0.3]} rotation={[-Math.PI / 8, 0, Math.PI / 16]}><meshStandardMaterial color="#bdc3c7" /></Cylinder>
+
+      {/* Main Tube Group */}
+      <group position={[0, 0.3, 0]} rotation={[0, 0, Math.PI / 4]} ref={tubeRef}>
+        {/* Mount Joint */}
+        <Sphere args={[0.04]}><meshStandardMaterial color="#34495e" /></Sphere>
+        {/* Main Tube */}
+        <Cylinder position={[0, 0.2, 0]} args={[0.04, 0.05, 0.4]}><meshStandardMaterial color="#ecf0f1" /></Cylinder>
+        {/* Lens end */}
+        <Cylinder position={[0, 0.4, 0]} args={[0.055, 0.05, 0.05]}><meshStandardMaterial color="#e74c3c" /></Cylinder>
+        <Cylinder position={[0, 0.41, 0]} args={[0.045, 0.045, 0.02]}><meshPhysicalMaterial color="#3498db" transmission={0.9} roughness={0.1} /></Cylinder>
+        {/* Eyepiece */}
+        <Cylinder position={[0, -0.02, 0]} args={[0.02, 0.04, 0.08]}><meshStandardMaterial color="#2d3436" /></Cylinder>
+        <Cylinder position={[0.03, -0.04, 0]} args={[0.01, 0.01, 0.06]} rotation={[0, 0, Math.PI / 4]}><meshStandardMaterial color="#2d3436" /></Cylinder>
+      </group>
+    </group>
+  )
+}
+
+function PhysicsCorner({ position, rotation, onInfo }: any) {
+  return (
+    <group position={position} rotation={rotation}>
+      {/* Banner */}
+      <Html transform position={[0, 1.5, -0.41]} scale={0.1}>
+        <div style={{ background: '#2980b9', color: 'white', padding: '10px 30px', borderRadius: '10px', fontSize: '40px', fontWeight: 'bold', border: '4px solid #34495e' }}>PHYSICS LAB</div>
+      </Html>
+
+      {/* Table */}
+      <Box position={[0, 0.45, 0]} args={[3, 0.05, 0.8]} castShadow><meshStandardMaterial color="#ecf0f1" /></Box>
+      <Box position={[-1.4, 0.225, 0]} args={[0.05, 0.45, 0.6]} castShadow><meshStandardMaterial color="#2d3436" /></Box>
+      <Box position={[1.4, 0.225, 0]} args={[0.05, 0.45, 0.6]} castShadow><meshStandardMaterial color="#2d3436" /></Box>
+
+      {/* Newton's Cradle */}
+      <NewtonCradle position={[-0.8, 0.475, 0]} rotation={[0, 0, 0]} onInfo={onInfo} />
+
+      {/* Telescope */}
+      <Telescope position={[0.8, 0.475, 0]} rotation={[0, 0, 0]} onInfo={onInfo} />
+
+      {/* Brass Weights */}
+      <group position={[0, 0.475, 0.1]}>
+        <Cylinder position={[-0.1, 0.05, 0]} args={[0.04, 0.04, 0.1]}><meshStandardMaterial color="#f1c40f" metalness={0.8} roughness={0.3} /></Cylinder>
+        <Cylinder position={[0, 0.04, 0]} args={[0.03, 0.03, 0.08]}><meshStandardMaterial color="#f1c40f" metalness={0.8} roughness={0.3} /></Cylinder>
+        <Cylinder position={[0.1, 0.03, 0]} args={[0.02, 0.02, 0.06]}><meshStandardMaterial color="#f1c40f" metalness={0.8} roughness={0.3} /></Cylinder>
+      </group>
+    </group>
+  )
+}
+
+function Microscope({ position, rotation = [0, 0, 0], onInfo }: any) {
+  const [active, setActive] = useState(false)
+  const lensRef = useRef<THREE.Mesh>(null)
+  const lightRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (active && lensRef.current) {
+      // Bob the lens up and down to simulate focusing
+      lensRef.current.position.y = 0.19 + Math.sin(state.clock.elapsedTime * 5) * 0.01
+    }
+    if (lightRef.current) {
+      // Toggle light emission based on active state
+      const material = lightRef.current.material as THREE.MeshStandardMaterial
+      material.emissiveIntensity = active ? 1.5 : 0
+    }
+  })
+
+  return (
+    <group position={position} rotation={rotation} onClick={(e) => { 
+      e.stopPropagation(); 
+      setActive(!active);
+      onInfo && onInfo(active ? 'Electron Microscope: Powered OFF.' : 'Electron Microscope: Powered ON. Scanning slide...') 
+    }}>
+      <Box position={[0, 0.02, 0]} args={[0.2, 0.04, 0.3]}><meshStandardMaterial color="#bdc3c7" /></Box>
+      <Cylinder position={[0, 0.15, -0.1]} args={[0.03, 0.04, 0.25]} rotation={[Math.PI / 8, 0, 0]}><meshStandardMaterial color="#7f8c8d" /></Cylinder>
+      <Box position={[0, 0.12, 0.05]} args={[0.15, 0.02, 0.15]}><meshStandardMaterial color="#34495e" /></Box>
+      <Cylinder position={[0, 0.28, -0.02]} args={[0.02, 0.02, 0.15]} rotation={[-Math.PI / 6, 0, 0]}><meshStandardMaterial color="#ecf0f1" /></Cylinder>
+      
+      {/* Movable Lens */}
+      <Cylinder ref={lensRef} position={[0, 0.19, 0.05]} args={[0.015, 0.015, 0.08]}><meshStandardMaterial color="#ecf0f1" /></Cylinder>
+      
+      {/* Light Stage */}
+      <Cylinder ref={lightRef} position={[0, 0.045, 0.05]} args={[0.02, 0.02, 0.01]}><meshStandardMaterial color="#ffffff" emissive="#3498db" emissiveIntensity={0} /></Cylinder>
+
+      {/* Holographic Cellular View */}
+      {active && (
+        <Html transform position={[0, 0.6, 0.05]} scale={0.05}>
+          <style>{`
+            @keyframes panSlide {
+              0% { transform: scale(1.2) translate(0, 0); }
+              25% { transform: scale(1.25) translate(5px, 5px); }
+              50% { transform: scale(1.3) translate(0px, 10px); }
+              75% { transform: scale(1.25) translate(-5px, 5px); }
+              100% { transform: scale(1.2) translate(0, 0); }
+            }
+            .micrograph-image {
+              position: absolute;
+              top: 0;
+              left: 0;
+              width: 100%;
+              height: 100%;
+              object-fit: cover;
+              animation: panSlide 20s infinite ease-in-out;
+              filter: contrast(1.1) brightness(1.1);
+            }
+          `}</style>
+          <div style={{
+            width: '400px',
+            height: '400px',
+            borderRadius: '50%',
+            border: '15px solid #2c3e50',
+            backgroundColor: '#000',
+            boxShadow: '0 0 50px rgba(46, 204, 113, 0.5), inset 0 0 60px rgba(0,0,0,0.8)',
+            overflow: 'hidden',
+            position: 'relative'
+          }}>
+             {/* Realistic Image */}
+             <img src="/cells-micrograph.jpg" alt="Realistic Cell Micrograph" className="micrograph-image" />
+             
+             {/* Reticle / Crosshair */}
+             <div style={{ position: 'absolute', top: '50%', left: '0', width: '100%', height: '2px', background: 'rgba(0,0,0,0.5)' }} />
+             <div style={{ position: 'absolute', top: '0', left: '50%', width: '2px', height: '100%', background: 'rgba(0,0,0,0.5)' }} />
+             <div style={{ position: 'absolute', top: '50%', left: '50%', width: '40px', height: '40px', border: '2px solid rgba(0,0,0,0.5)', borderRadius: '50%', transform: 'translate(-50%, -50%)' }} />
+             
+             {/* UI Overlay */}
+             <div style={{ position: 'absolute', bottom: '30px', left: '50%', transform: 'translateX(-50%)', color: '#fff', fontFamily: 'monospace', fontWeight: 'bold', fontSize: '24px', textShadow: '0 0 5px #000, 0 0 10px #000' }}>
+               1000x MAGNIFICATION
+             </div>
+          </div>
+        </Html>
+      )}
+    </group>
+  )
+}
+
+function BiologyCorner({ position, rotation, onInfo }: any) {
+  const glassMat = <meshPhysicalMaterial color="#ffffff" transmission={0.9} opacity={1} transparent roughness={0.1} />
+
+  return (
+    <group position={position} rotation={rotation}>
+      {/* Banner */}
+      <Html transform position={[0, 1.5, -0.41]} scale={0.1}>
+        <div style={{ background: '#27ae60', color: 'white', padding: '10px 30px', borderRadius: '10px', fontSize: '40px', fontWeight: 'bold', border: '4px solid #2ecc71' }}>BIOLOGY LAB</div>
+      </Html>
+
+      {/* Table */}
+      <Box position={[0, 0.45, 0]} args={[3, 0.05, 0.8]} castShadow><meshStandardMaterial color="#ecf0f1" /></Box>
+      <Box position={[-1.4, 0.225, 0]} args={[0.05, 0.45, 0.6]} castShadow><meshStandardMaterial color="#2d3436" /></Box>
+      <Box position={[1.4, 0.225, 0]} args={[0.05, 0.45, 0.6]} castShadow><meshStandardMaterial color="#2d3436" /></Box>
+
+      {/* Microscope */}
+      <Microscope position={[-0.8, 0.475, 0]} rotation={[0, Math.PI / 4, 0]} onInfo={onInfo} />
+
+      {/* Centrifuge */}
+      <Centrifuge position={[0.3, 0.475, -0.2]} rotation={[0, 0, 0]} onInfo={onInfo} />
+
+      {/* Test Tube Rack */}
+      <group position={[0, 0.475, -0.1]}>
+        <Box position={[0, 0.02, 0]} args={[0.4, 0.04, 0.1]}><meshStandardMaterial color="#d35400" /></Box>
+        <Box position={[0, 0.12, 0]} args={[0.4, 0.02, 0.1]}><meshStandardMaterial color="#d35400" /></Box>
+        <Box position={[-0.18, 0.07, 0]} args={[0.02, 0.1, 0.1]}><meshStandardMaterial color="#d35400" /></Box>
+        <Box position={[0.18, 0.07, 0]} args={[0.02, 0.1, 0.1]}><meshStandardMaterial color="#d35400" /></Box>
+
+        {/* Tubes */}
+        {[-0.1, 0, 0.1].map((x, i) => (
+          <group key={x} position={[x, 0.08, 0]}>
+            <Cylinder args={[0.015, 0.015, 0.15]}>{glassMat}</Cylinder>
+            <Cylinder position={[0, -0.025, 0]} args={[0.013, 0.013, 0.1]}>
+              <meshBasicMaterial color={i === 0 ? '#e74c3c' : i === 1 ? '#3498db' : '#2ecc71'} transparent opacity={0.8} />
+            </Cylinder>
+          </group>
+        ))}
+      </group>
+
+      {/* Petri Dishes and Plant */}
+      <group position={[0.8, 0.475, 0]}>
+        <Cylinder position={[-0.2, 0.01, 0.1]} args={[0.05, 0.05, 0.02]}>{glassMat}</Cylinder>
+        <Cylinder position={[-0.1, 0.01, 0.2]} args={[0.05, 0.05, 0.02]}>{glassMat}</Cylinder>
+        {/* Plant Pot */}
+        <Cylinder position={[0.1, 0.1, 0]} args={[0.08, 0.06, 0.2]}><meshStandardMaterial color="#e67e22" /></Cylinder>
+        {/* Plant Leaves */}
+        <Sphere position={[0.1, 0.25, 0]} args={[0.1]}><meshStandardMaterial color="#27ae60" /></Sphere>
+        <Sphere position={[0.05, 0.22, 0.05]} args={[0.08]}><meshStandardMaterial color="#2ecc71" /></Sphere>
+        <Sphere position={[0.15, 0.22, -0.05]} args={[0.08]}><meshStandardMaterial color="#2ecc71" /></Sphere>
+      </group>
+    </group>
+  )
+}
+
+function Portal({ position, rotation=[0,0,0], label, color, onClick }: any) {
+  return (
+    <group position={position} rotation={rotation} onClick={(e) => { e.stopPropagation(); onClick() }} onPointerOver={() => document.body.style.cursor='pointer'} onPointerOut={() => document.body.style.cursor='auto'}>
+      <Box args={[1.5, 2.5, 0.1]} position={[0, 1.25, 0]}>
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} transparent opacity={0.8} />
+      </Box>
+      <Html transform position={[0, 2.8, 0]} scale={0.1}>
+        <div style={{ color: 'white', background: 'rgba(0,0,0,0.8)', padding: '5px 10px', border: `2px solid ${color}`, borderRadius: '5px', fontSize: '24px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+          {label}
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+function StandardRoom({ title, color, children, onExit }: any) {
+  const glassMat = <meshPhysicalMaterial color="#ffffff" transmission={0.95} opacity={1} transparent roughness={0.05} />
+  const frameMat = <meshStandardMaterial color="#0f0f0f" metalness={0.9} roughness={0.2} />
+  const floorMat = <meshStandardMaterial color="#111111" roughness={0.15} metalness={0.7} />
+  const concreteMat = <meshStandardMaterial color="#2d3436" roughness={0.9} />
+
+  // Create architectural mullions for the glass wall
+  const mullions = []
+  for (let i = -7.5; i <= 7.5; i += 2.5) {
+    mullions.push(<Box key={`mz-${i}`} position={[i, 1.6, -5]} args={[0.08, 3.2, 0.08]}>{frameMat}</Box>)
+    mullions.push(<Box key={`mf-${i}`} position={[i, 1.6, 5]} args={[0.08, 3.2, 0.08]}>{frameMat}</Box>)
+  }
+
+  return (
+    <>
+      <Environment preset="city" background blur={0.6} />
+      {/* Modern Studio Lighting */}
+      <ambientLight intensity={0.4} color="#ffffff" />
+      <directionalLight position={[5, 10, -5]} intensity={1.5} color="#e0f7fa" castShadow />
+      <pointLight position={[0, 3, 0]} intensity={1.5} color={color} distance={15} />
+
+      {/* Floating Ceiling */}
+      <Box position={[0, 3.25, 0]} args={[15, 0.1, 10]} receiveShadow>{concreteMat}</Box>
+      
+      {/* Neon Edge Light on ceiling */}
+      <Box position={[0, 3.19, 0]} args={[14.8, 0.02, 9.8]}>
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.5} />
+      </Box>
+
+      {/* High-gloss dark floor */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[15, 10]} />
+        {floorMat}
+      </mesh>
+      
+      {/* Baseboard Neon Light */}
+      <Box position={[0, 0.01, 0]} args={[14.9, 0.02, 9.9]}>
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.8} />
+      </Box>
+      
+      {/* Solid Side Walls (Brutalist Concrete) */}
+      <Box position={[-7.5, 1.6, 0]} args={[0.2, 3.2, 10]} receiveShadow>{concreteMat}</Box>
+      <Box position={[7.5, 1.6, 0]} args={[0.2, 3.2, 10]} receiveShadow>{concreteMat}</Box>
+      
+      {/* Glass Front & Back Walls */}
+      <Box position={[0, 1.6, -5]} args={[15, 3.2, 0.05]} receiveShadow>{glassMat}</Box>
+      <Box position={[0, 1.6, 5]} args={[15, 3.2, 0.05]} receiveShadow>{glassMat}</Box>
+      
+      {/* Frames & Mullions */}
+      <Box position={[0, 0.05, -5]} args={[15, 0.1, 0.1]}>{frameMat}</Box>
+      <Box position={[0, 3.15, -5]} args={[15, 0.1, 0.1]}>{frameMat}</Box>
+      <Box position={[0, 0.05, 5]} args={[15, 0.1, 0.1]}>{frameMat}</Box>
+      <Box position={[0, 3.15, 5]} args={[15, 0.1, 0.1]}>{frameMat}</Box>
+      {mullions}
+
+      {/* Exit Door */}
+      {onExit && <Portal position={[0, 0, 4.8]} rotation={[0, Math.PI, 0]} label="Back to Hub" color="#e74c3c" onClick={onExit} />}
+      
+      {/* Architectural Typography (Title) */}
+      <Html transform position={[-7.3, 2.0, 0]} rotation={[0, Math.PI/2, 0]} scale={0.15}>
+        <div style={{ color: color, fontSize: '50px', fontFamily: 'sans-serif', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '8px', textShadow: `0 0 20px ${color}` }}>
+          {title}
+        </div>
+      </Html>
+
+      {children}
+    </>
+  )
+}
+
+function CameraResetter({ room }: any) {
+  const { camera } = useThree()
+  useEffect(() => {
+    camera.position.set(0, 1.5, 2)
+  }, [room])
+  return null
+}
+
+function HubRoom({ setCurrentRoom, onInfo }: any) {
+  return (
+    <StandardRoom title="Central Hub: Introduction" color="#2c3e50">
+      <Portal position={[-4, 0, -4.9]} label="Enter Physics" color="#3498db" onClick={() => setCurrentRoom('physics')} />
+      <Portal position={[-1.5, 0, -4.9]} label="Enter Chemistry" color="#e67e22" onClick={() => setCurrentRoom('chemistry')} />
+      <Portal position={[1.5, 0, -4.9]} label="Enter Biology" color="#2ecc71" onClick={() => setCurrentRoom('biology')} />
+      <Portal position={[4, 0, -4.9]} label="Enter Math" color="#9b59b6" onClick={() => setCurrentRoom('math')} />
+      <Portal position={[7.4, 0, 0]} rotation={[0, -Math.PI/2, 0]} label="Enter AI" color="#f1c40f" onClick={() => setCurrentRoom('ai')} />
+      
+      <Whiteboard position={[-7.35, 1.6, -1.5]} setAssistantMessage={onInfo} />
+      <InnovationWall position={[0, 0, 4.9]} rotation={[0, Math.PI, 0]} />
+    </StandardRoom>
+  )
+}
+
+function ChemistryRoom({ setCurrentRoom, onInfo, currentVal }: any) {
+  return (
+    <StandardRoom title="Chemistry Lab" color="#e67e22" onExit={() => setCurrentRoom('hub')}>
+      <ChemistryCorner position={[6.8, 0, 0]} rotation={[0, -Math.PI / 2, 0]} onInfo={onInfo} />
+      <WaterFilter position={[-0.5, 0.925, -1.8]} onInfo={onInfo} />
+      <BunsenBurner position={[-1.5, 0.925, -1.5]} rotation={[0, 0, 0]} onInfo={onInfo} />
+      
+      <group position={[0, 0, -1.8]}>
+        <Box position={[0, 0.9, 0]} args={[4, 0.05, 1.2]} receiveShadow castShadow><meshStandardMaterial color="#ffffff" roughness={0.3} metalness={0.1} /></Box>
+        <Box position={[-1.9, 0.45, -0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[1.9, 0.45, -0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[-1.9, 0.45, 0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[1.9, 0.45, 0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+      </group>
+    </StandardRoom>
+  )
+}
+
+function PhysicsRoom({ setCurrentRoom, onInfo, currentVal }: any) {
+  return (
+    <StandardRoom title="Physics Lab" color="#3498db" onExit={() => setCurrentRoom('hub')}>
+      <PhysicsCorner position={[6.8, 0, 0]} rotation={[0, -Math.PI / 2, 0]} onInfo={onInfo} />
+      <Oscilloscope position={[1.2, 0.925, -1.8]} rotation={[0, -Math.PI / 8, 0]} currentVal={currentVal} onInfo={onInfo} />
+      <PowerSupply position={[1.6, 0.925, -1.8]} rotation={[0, -Math.PI / 6, 0]} onInfo={onInfo} />
+      <Multimeter position={[0.7, 0.925, -1.6]} rotation={[0, -Math.PI/4, 0]} onInfo={onInfo} />
+      
+      <group position={[0, 0, -1.8]}>
+        <Box position={[0, 0.9, 0]} args={[4, 0.05, 1.2]} receiveShadow castShadow><meshStandardMaterial color="#ffffff" roughness={0.3} metalness={0.1} /></Box>
+        <Box position={[-1.9, 0.45, -0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[1.9, 0.45, -0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[-1.9, 0.45, 0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[1.9, 0.45, 0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+      </group>
+    </StandardRoom>
+  )
+}
+
+// --- BIOLOGY LAB EQUIPMENT ---
+function Terrarium({ position, rotation = [0, 0, 0], onInfo }: any) {
+  return (
+    <group position={position} rotation={rotation} onClick={(e) => { e.stopPropagation(); onInfo && onInfo('Terrarium: Simulating a closed ecosystem with native Sundarbans mangrove plants.') }} onPointerOver={() => document.body.style.cursor='pointer'} onPointerOut={() => document.body.style.cursor='auto'}>
+      {/* Base */}
+      <Box position={[0, 0.05, 0]} args={[0.8, 0.1, 0.5]}><meshStandardMaterial color="#2d3436" /></Box>
+      {/* Glass Case */}
+      <Box position={[0, 0.4, 0]} args={[0.75, 0.6, 0.45]}>
+        <meshPhysicalMaterial color="#ffffff" transmission={0.9} opacity={1} transparent roughness={0.1} />
+      </Box>
+      {/* Soil */}
+      <Box position={[0, 0.15, 0]} args={[0.7, 0.1, 0.4]}><meshStandardMaterial color="#5D4037" roughness={1} /></Box>
+      {/* Plants */}
+      <Cylinder position={[-0.2, 0.3, 0]} args={[0.02, 0.02, 0.3]}><meshStandardMaterial color="#27ae60" /></Cylinder>
+      <Sphere position={[-0.2, 0.45, 0]} args={[0.1]}><meshStandardMaterial color="#2ecc71" /></Sphere>
+      
+      <Cylinder position={[0.2, 0.25, 0.1]} args={[0.015, 0.015, 0.2]}><meshStandardMaterial color="#27ae60" /></Cylinder>
+      <Sphere position={[0.2, 0.35, 0.1]} args={[0.08]}><meshStandardMaterial color="#2ecc71" /></Sphere>
+      
+      <ClickIndicator position={[0, 0.8, 0]} />
+    </group>
+  )
+}
+
+
+
+// --- MATH LAB EQUIPMENT ---
+function Chalkboard({ position, rotation = [0, 0, 0] }: any) {
+  return (
+    <group position={position} rotation={rotation}>
+      <Box position={[0, 1.5, 0]} args={[6, 2.5, 0.1]}><meshStandardMaterial color="#27ae60" roughness={0.9} /></Box>
+      <Box position={[0, 1.5, -0.02]} args={[6.1, 2.6, 0.1]}><meshStandardMaterial color="#8e44ad" /></Box>
+      
+      <Html transform position={[0, 1.5, 0.06]} scale={0.1}>
+        <div style={{ color: 'white', fontFamily: 'monospace', fontSize: '30px', width: '500px' }}>
+          <h3>River Flow Dynamics</h3>
+          <p>Q = v * A</p>
+          <p>Where:<br/>Q = Discharge (m³/s)<br/>v = Velocity (m/s)<br/>A = Cross-sectional Area (m²)</p>
+          <hr/>
+          <p>Calculate flood risk delta for Shyamnagar embankments given Q_max = 1500.</p>
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+function GeometricShapes({ position }: any) {
+  return (
+    <group position={position}>
+      <Box position={[-0.5, 0.2, 0]} args={[0.3, 0.3, 0.3]} rotation={[0.5, 0.5, 0]}><meshStandardMaterial color="#e74c3c" wireframe /></Box>
+      <Sphere position={[0.5, 0.2, 0]} args={[0.2, 16, 16]}><meshStandardMaterial color="#3498db" wireframe /></Sphere>
+      <Cylinder position={[0, 0.2, 0.4]} args={[0, 0.2, 0.4, 4]} rotation={[0.2, 0, 0.1]}><meshStandardMaterial color="#f1c40f" wireframe /></Cylinder>
+    </group>
+  )
+}
+
+// --- AI LAB EQUIPMENT ---
+function HolographicTerminal({ position, rotation = [0, 0, 0] }: any) {
+  return (
+    <group position={position} rotation={rotation}>
+      {/* Console Base */}
+      <Box position={[0, 0.5, 0]} args={[1.5, 1, 0.8]}><meshStandardMaterial color="#2d3436" metalness={0.8} /></Box>
+      <Box position={[0, 1.05, 0.2]} args={[1.2, 0.05, 0.4]} rotation={[0.2, 0, 0]}><meshStandardMaterial color="#111" /></Box>
+      
+      {/* Floating Holographic Screen */}
+      <group position={[0, 1.8, -0.2]}>
+        <Box args={[2, 1.2, 0.02]}><meshStandardMaterial color="#0984e3" emissive="#0984e3" emissiveIntensity={0.5} transparent opacity={0.6} /></Box>
+        <Html transform position={[0, 0, 0.02]} scale={0.08}>
+          <div style={{ color: '#00cec9', fontFamily: 'monospace', fontSize: '18px', width: '220px', background: 'rgba(0,0,0,0.5)', padding: '10px', border: '1px solid #00cec9', borderRadius: '5px' }}>
+            <div style={{ animation: 'pulse-btn 2s infinite' }}>[ TRAINING NEURAL NET ]</div>
+            <br/>
+            Epoch: 4502 / 5000<br/>
+            Loss: 0.0021<br/>
+            <br/>
+            Optimizing crop yield predictions for high-salinity soil...
+            <br/><br/>
+            Status: 89% Complete
+          </div>
+        </Html>
+      </group>
+    </group>
+  )
+}
+
+function BiologyRoom({ setCurrentRoom, onInfo }: any) {
+  return (
+    <StandardRoom title="Biology Lab" color="#2ecc71" onExit={() => setCurrentRoom('hub')}>
+      <BiologyCorner position={[6.8, 0, 0]} rotation={[0, -Math.PI / 2, 0]} onInfo={onInfo} />
+      
+      {/* Central Table */}
+      <group position={[0, 0, -1.8]}>
+        <Box position={[0, 0.9, 0]} args={[4, 0.05, 1.2]} receiveShadow castShadow><meshStandardMaterial color="#ffffff" roughness={0.3} /></Box>
+        <Box position={[-1.9, 0.45, -0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[1.9, 0.45, -0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[-1.9, 0.45, 0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[1.9, 0.45, 0.5]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+      </group>
+
+      <Terrarium position={[-1, 0.925, -1.8]} onInfo={onInfo} />
+      <Microscope position={[1, 0.925, -1.8]} rotation={[0, -Math.PI/4, 0]} onInfo={onInfo} />
+    </StandardRoom>
+  )
+}
+
+function MathRoom({ setCurrentRoom }: any) {
+  return (
+    <StandardRoom title="Mathematics Lab" color="#9b59b6" onExit={() => setCurrentRoom('hub')}>
+      <Chalkboard position={[0, 0, -4.8]} />
+      
+      {/* Central Table */}
+      <group position={[0, 0, -1.5]}>
+        <Box position={[0, 0.9, 0]} args={[3, 0.05, 1]} receiveShadow castShadow><meshStandardMaterial color="#ffffff" roughness={0.3} /></Box>
+        <Box position={[-1.4, 0.45, -0.4]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[1.4, 0.45, -0.4]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[-1.4, 0.45, 0.4]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+        <Box position={[1.4, 0.45, 0.4]} args={[0.05, 0.9, 0.05]}><meshStandardMaterial color="#2d3436" /></Box>
+      </group>
+
+      <GeometricShapes position={[0, 0.925, -1.5]} />
+    </StandardRoom>
+  )
+}
+
+function AIRoom({ setCurrentRoom }: any) {
+  return (
+    <StandardRoom title="AI Lab" color="#f1c40f" onExit={() => setCurrentRoom('hub')}>
+      {/* Server Farm Aisle */}
+      <ServerRack position={[-3, 0, -3]} />
+      <ServerRack position={[-1.5, 0, -3]} />
+      <ServerRack position={[0, 0, -3]} />
+      <ServerRack position={[1.5, 0, -3]} />
+      <ServerRack position={[3, 0, -3]} />
+
+      <ServerRack position={[-3, 0, 2]} rotation={[0, Math.PI, 0]} />
+      <ServerRack position={[-1.5, 0, 2]} rotation={[0, Math.PI, 0]} />
+      <ServerRack position={[1.5, 0, 2]} rotation={[0, Math.PI, 0]} />
+      <ServerRack position={[3, 0, 2]} rotation={[0, Math.PI, 0]} />
+
+      <HolographicTerminal position={[0, 0, 0]} />
+    </StandardRoom>
+  )
+}
+
+function App() {
+  const [gameState, setGameState] = useState('SANDBOX')
+  const [wireConnected, setWireConnected] = useState(false)
+  const [switchOn, setSwitchOn] = useState(false)
+  const [resistance, setResistance] = useState(10)
+  const current = wireConnected && switchOn ? 1.5 / resistance : 0
+  const chartData = testedValues.map(r => ({ R: r, I: parseFloat((1.5 / r).toFixed(3)) })).sort((a, b) => a.R - b.R)
+  
+  const [currentRoom, setCurrentRoom] = useState('hub')
+  const [assistantMessage, setAssistantMessage] = useState("Welcome to the Universal Synthesis Lab. All linear tutorials have been disabled. You are free to interact with any physics, electrical, or chemistry experiments on the tables. Click on any equipment to learn more about it.")
+
+  
+  
+  
+
+  const [testedValues, setTestedValues] = useState<number[]>([])
+
+  const voltage = 1.5
+  
+
+  
+
+  const [isMobile] = useState(() => ('ontouchstart' in window) || navigator.maxTouchPoints > 0)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
+
+  // Track tested values for the graph even in sandbox mode
+  useEffect(() => {
+    if (wireConnected && switchOn && !testedValues.includes(resistance)) {
+      playSound('success')
+      setTestedValues(prev => [...prev, resistance])
+    }
+  }, [resistance, wireConnected, switchOn, testedValues])
+
+  const toggleFullScreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(e => console.error(e))
+    } else {
+      if (document.exitFullscreen) document.exitFullscreen()
+    }
+  }
+
+  return (
+    <>
+      <Canvas camera={{ position: [0, 1.6, -9], fov: 60 }}>
+        <PointerLockControls />
+        <Player />
+
+        
+        <CameraResetter room={currentRoom} />
+        {currentRoom === 'hub' && <HubRoom setCurrentRoom={setCurrentRoom} onInfo={setAssistantMessage} />}
+        {currentRoom === 'chemistry' && <ChemistryRoom setCurrentRoom={setCurrentRoom} onInfo={setAssistantMessage} currentVal={current} />}
+        {currentRoom === 'physics' && <PhysicsRoom setCurrentRoom={setCurrentRoom} onInfo={setAssistantMessage} currentVal={current} />}
+        {currentRoom === 'biology' && <BiologyRoom setCurrentRoom={setCurrentRoom} onInfo={setAssistantMessage} />}
+        {currentRoom === 'math' && <MathRoom setCurrentRoom={setCurrentRoom} onInfo={setAssistantMessage} />}
+        {currentRoom === 'ai' && <AIRoom setCurrentRoom={setCurrentRoom} onInfo={setAssistantMessage} />}
+
+
+        {isMobile && <MobileControls />}
+      </Canvas>
+
+      <div className="ui-layer">
+        <button onClick={toggleFullScreen} className="fullscreen-btn" style={{ display: isFullscreen ? 'none' : 'block' }}>
+          FULLSCREEN
+        </button>
+        {/* Crosshair */}
+        <div style={{ position: 'absolute', top: '50%', left: '50%', width: '8px', height: '8px', background: 'white', borderRadius: '50%', transform: 'translate(-50%, -50%)', pointerEvents: 'none', zIndex: 100, mixBlendMode: 'difference', boxShadow: '0 0 10px rgba(255,255,255,0.5)' }}></div>
+
+        <div className="instruction-box" style={{ marginBottom: '20px' }}>
+          <h3 className="ui-title">Assistant Creta</h3>
+
+          <div style={{ margin: '16px 0 24px 0' }}>
+            <p className="ui-text">
+              {assistantMessage}
+            </p>
+          </div>
+
+          <div style={{ background: 'rgba(0, 0, 0, 0.6)', padding: '12px 16px', borderRadius: '8px', width: '100%', textAlign: 'center', fontFamily: 'monospace', color: '#10b981', fontSize: '15px', boxShadow: 'inset 0 0 10px rgba(0,0,0,0.8)', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+            SENSORS: V: {voltage.toFixed(1)}V &nbsp;|&nbsp; R: {resistance}Ω &nbsp;|&nbsp; I: {current.toFixed(3)}A
+          </div>
+
+          <p className="ui-controls-hint">
+            {!isMobile ? "Click to lock pointer • WASD to walk • Mouse to look • ESC to unlock" : "Use left side D-Pad to walk • Drag right side to look around"}
+          </p>
+        </div>
+      </div>
+    </>
+  )
+}
+
+export default App

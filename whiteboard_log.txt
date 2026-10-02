@@ -1,0 +1,161 @@
+Created At: 2026-10-03T04:05:23+06:00
+Completed At: 2026-10-03T04:05:25+06:00
+The following changes were made by the multi_replace_file_content tool to: /Users/MacBookPro/Downloads/nodelab/src/App.tsx. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -432,15 +432,18 @@
+ }
+ 
+ function Whiteboard({ position, setAssistantMessage }: any) {
+-  const [missionActive, setMissionActive] = useState(false)
++  const [level, setLevel] = useState(0)
+ 
+   const toggleMission = (e: any) => {
+     e.stopPropagation()
+-    const newState = !missionActive
+-    setMissionActive(newState)
++    const next = (level + 1) % 3
++    setLevel(next)
++    
+     if (setAssistantMessage) {
+-      if (newState) {
+-        setAssistantMessage("Mission started: Operation Nodi. Grandmother Rokeya says: 'We do not need to be rescued. We need scientists who understand us.' 🧪 Walk over to the Chemistry Lab on the right side of the room to begin.")
++      if (next === 1) {
++        setAssistantMessage("Level 1: The Salty Pond. Grandmother Rokeya says: 'We need scientists who understand us.' 🧪 Walk over to the Chemistry Lab on the right side of the room.")
++      } else if (next === 2) {
++        setAssistantMessage("Level 2: The Mystery Tube-Well. Rafiq's uncle drank clear water and got sick. 💧 Check the Water Filter on the center table.")
+       } else {
+         setAssistantMessage("Mission paused. Free roam mode active.")
+       }
+@@ -467,14 +467,23 @@
+       {/* Scribbles */}
+       <Html transform position={[0, 0, 0.03]} scale={0.1}>
+         <div style={{ width: '800px', height: '300px', fontSize: '24px', fontFamily: 'sans-serif', color: '#2c3e50', padding: '20px', position: 'relative', pointerEvents: 'none' }}>
+-          {missionActive ? (
+-            <div>
+-              <h3 style={{ marginTop: 0, color: '#27ae60', fontSize: '32px' }}>MISSION ACTIVE</h3>
+-              <p style={{ fontWeight: 'bold' }}>Welcome to Operation Nodi, Scientist.</p>
+-              <p>Your objective: Restore safe water, healthy crops, and power to Shyamnagar.</p>
+-              <p>Go to the Chemistry Lab for <strong>Level 1: The Salty Pond</strong>.</p>
+-              <button 
+-                style={{ position: 'absolute', bottom: '20px', right: '20px', padding: '10px 20px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '5px', fontSize: '20px', fontWeight: 'bold' }}>
++          {level === 1 ? (
++            <div>
++              <h3 style={{ marginTop: 0, color: '#e67e22', fontSize: '32px' }}>LEVEL 1 ACTIVE</h3>
++              <p style={{ fontWeight: 'bold' }}>The Salty Pond</p>
++              <p>Your objective: Why does pond water taste salty, but the steam does not?</p>
++              <p>Go to the Chemistry Lab for <strong>Solar Still Experiment</strong>.</p>
++              <button style={{ position: 'absolute', bottom: '20px', right: '20px', padding: '10px 20px', background: '#3498db', color: 'white', border: 'none', borderRadius: '5px', fontSize: '20px', fontWeight: 'bold' }}>
++                NEXT LEVEL
++              </button>
++            </div>
++          ) : level === 2 ? (
++            <div>
++              <h3 style={{ marginTop: 0, color: '#3498db', fontSize: '32px' }}>LEVEL 2 ACTIVE</h3>
++              <p style={{ fontWeight: 'bold' }}>The Mystery Tube-Well</p>
++              <p>Your objective: Why can water be perfectly clear and still make you sick?</p>
++              <p>Go to the Center Table for <strong>3-Pitcher Water Filter</strong>.</p>
++              <button style={{ position: 'absolute', bottom: '20px', right: '20px', padding: '10px 20px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '5px', fontSize: '20px', fontWeight: 'bold' }}>
+                 ABORT MISSION
+               </button>
+             </div>
+@@ -482,9 +482,8 @@
+               <h3 style={{ marginTop: 0, color: '#2980b9', fontSize: '32px' }}>Operation Nodi: The Last Clean Drop</h3>
+               <p><strong>Status:</strong> Pending &nbsp;|&nbsp; <strong>Location:</strong> Shyamnagar, Satkhira (2040)</p>
+               <p><strong>Objective:</strong> A cyclone has pushed salt water into ponds. We need scientists who understand us. Will you be one?</p>
+-              <button 
+-                style={{ position: 'absolute', bottom: '20px', right: '20px', padding: '10px 20px', background: '#2ecc71', color: 'white', border: 'none', borderRadius: '5px', fontSize: '20px', fontWeight: 'bold' }}>
+-                ENTER HERE
++              <button style={{ position: 'absolute', bottom: '20px', right: '20px', padding: '10px 20px', background: '#2ecc71', color: 'white', border: 'none', borderRadius: '5px', fontSize: '20px', fontWeight: 'bold' }}>
++                ENTER MISSION
+               </button>
+             </div>
+           )}
+@@ -491,9 +491,7 @@
+       </Html>
+ 
+       {/* Floating Click Indicator when pending */}
+-      {!missionActive && (
+-        <ClickIndicator position={[0, 1.2, 0.1]} />
+-      )}
++      <ClickIndicator position={[0, 1.2, 0.1]} />
+     </group>
+   )
+ }
+@@ -993,6 +993,71 @@
+   )
+ }
+ 
++function WaterFilter({ position, rotation = [0, 0, 0], onInfo }: any) {
++  const [stage, setStage] = useState(0) 
++
++  const handleClick = (e: any) => {
++    e.stopPropagation()
++    const nextStage = (stage + 1) % 4
++    setStage(nextStage)
++    
++    if (onInfo) {
++      if (nextStage === 0) onInfo("Water Filter (Empty). Needs layers to filter out particles and arsenic.")
++      else if (nextStage === 1) onInfo("Added Iron Nails & Charcoal: Iron binds to arsenic, charcoal removes odors.")
++      else if (nextStage === 2) onInfo("Added Sand & Gravel: Traps large particles and rust.")
++      else if (nextStage === 3) onInfo("Filtering... Clear water is pouring out! Arsenic test kit shows it's safe.")
++    }
++  }
++
++  return (
++    <group position={position} rotation={rotation} onClick={handleClick} onPointerOver={() => document.body.style.cursor = 'pointer'} onPointerOut={() => document.body.style.cursor = 'auto'}>
++      {/* 3 Pitchers stacked */}
++      {/* Pitcher 1: Top */}
++      <Cylinder position={[0, 0.45, 0]} args={[0.15, 0.1, 0.2, 16]}>
++        <meshStandardMaterial color="#c0392b" roughness={0.8} />
++      </Cylinder>
++      {/* Sand layer */}
++      {stage >= 2 && <Cylinder position={[0, 0.45, 0]} args={[0.12, 0.08, 0.1, 16]}><meshStandardMaterial color="#f39c12" /></Cylinder>}
++      
++      {/* Pitcher 2: Middle */}
++      <Cylinder position={[0, 0.2, 0]} args={[0.15, 0.1, 0.2, 16]}>
++        <meshStandardMaterial color="#c0392b" roughness={0.8} />
++      </Cylinder>
++      {/* Charcoal & Iron layer */}
++      {stage >= 1 && <Cylinder position={[0, 0.2, 0]} args={[0.12, 0.08, 0.1, 16]}><meshStandardMaterial color="#2c3e50" /></Cylinder>}
++      
++      {/* Pitcher 3: Bottom */}
++      <Cylinder position={[0, -0.05, 0]} args={[0.15, 0.15, 0.2, 16]}>
++        <meshStandardMaterial color="#c0392b" roughness={0.8} />
++      </Cylinder>
++      {/* Clean water */}
++      {stage === 3 && <Cylinder position={[0, -0.05, 0]} args={[0.12, 0.12, 0.1, 16]}><meshPhysicalMaterial color="#3498db" transmission={0.9} opacity={0.8} transparent /></Cylinder>}
++
++      {/* Frame holding them */}
++      <Box position={[-0.18, 0.2, 0]} args={[0.02, 0.7, 0.02]}><meshStandardMaterial color="#7f8c8d" /></Box>
++      <Box position={[0.18, 0.2, 0]} args={[0.02, 0.7, 0.02]}><meshStandardMaterial color="#7f8c8d" /></Box>
++
++      {/* Floating Label */}
++      <Html transform position={[0, 0.7, 0]} scale={0.05}>
++        <div style={{ background: 'rgba(0,0,0,0.8)', color: 'white', padding: '6px 12px', borderRadius: '4px', whiteSpace: 'nowrap', pointerEvents: 'none', border: '1px solid #3498db', textAlign: 'center' }}>
++          <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '2px', color: '#3498db' }}>
++            Level 2: 3-Pitcher Filter
++          </div>
++          <div style={{ fontSize: '10px', color: '#ecf0f1' }}>
++            {stage === 0 ? "Empty. Click to add Iron/Charcoal." : 
++             stage === 1 ? "Click to add Sand/Gravel." : 
++             stage === 2 ? "Ready. Click to pour water." : 
++             "Filtering complete! Click to reset."}
++          </div>
++        </div>
++      </Html>
++
++      {/* Click Indicator */}
++      {stage !== 3 && <ClickIndicator position={[0, 0.9, 0]} />}
++    </group>
++  )
++}
++
+ function ChemistryCorner({ position, rotation, onInfo }: any) {
+   
+   const [stirring, setStirring] = useState(false)
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not shown.
+
+There were some inaccuracies with your replacement chunks, specified by chunk index. We were unable to apply the following changes:
+chunk 2: target content not found in file

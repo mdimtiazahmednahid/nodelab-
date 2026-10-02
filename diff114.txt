@@ -1,0 +1,87 @@
+Created At: 2026-10-03T04:00:25+06:00
+Completed At: 2026-10-03T04:00:26+06:00
+The following changes were made by the replace_file_content tool to: /Users/MacBookPro/Downloads/nodelab/src/App.tsx. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -883,6 +883,79 @@
+   )
+ }
+ 
++function SolarStill({ position, rotation = [0, 0, 0], onInfo }: any) {
++  const [stage, setStage] = useState(0)
++
++  const handleClick = (e: any) => {
++    e.stopPropagation()
++    const nextStage = (stage + 1) % 4
++    setStage(nextStage)
++    
++    if (onInfo) {
++      if (nextStage === 0) onInfo("Solar Still (Empty): A basic distillation setup. Click to add salty pond water.")
++      else if (nextStage === 1) onInfo("Solar Still (Filled): Salty water added. Click to cover with clear plastic.")
++      else if (nextStage === 2) onInfo("Solar Still (Covered): The sun heats the water. Only H2O evaporates, leaving salt. Click to wait.")
++      else if (nextStage === 3) onInfo("Solar Still (Complete): Pure water condensed! Test shows conductivity near zero. Safe to drink.")
++    }
++  }
++
++  return (
++    <group position={position} rotation={rotation} onClick={handleClick} onPointerOver={() => document.body.style.cursor = 'pointer'} onPointerOut={() => document.body.style.cursor = 'auto'}>
++      {/* Outer Clay Pot */}
++      <Cylinder position={[0, 0.08, 0]} args={[0.2, 0.15, 0.16, 32]}>
++        <meshStandardMaterial color="#d35400" roughness={0.9} />
++      </Cylinder>
++      
++      {/* Salty Water inside the pot */}
++      {stage > 0 && (
++        <Cylinder position={[0, 0.10, 0]} args={[0.18, 0.16, 0.08, 32]}>
++          <meshPhysicalMaterial color="#3498db" transmission={0.6} opacity={0.8} transparent roughness={0.2} />
++        </Cylinder>
++      )}
++
++      {/* Collecting Cup in the center */}
++      <Cylinder position={[0, 0.08, 0]} args={[0.04, 0.03, 0.14, 16]}>
++        <meshStandardMaterial color="#bdc3c7" roughness={0.4} />
++      </Cylinder>
++
++      {/* Pure water in the cup */}
++      {stage === 3 && (
++        <Cylinder position={[0, 0.11, 0]} args={[0.035, 0.025, 0.08, 16]}>
++          <meshPhysicalMaterial color="#ffffff" transmission={0.9} opacity={0.9} transparent roughness={0.1} />
++        </Cylinder>
++      )}
++
++      {/* Clear plastic cover (pushed down by a virtual stone in the middle) */}
++      {stage >= 2 && (
++        <group position={[0, 0.22, 0]}>
++          <Cone args={[0.21, 0.15, 32]} rotation={[Math.PI, 0, 0]}>
++            <meshPhysicalMaterial color="#ffffff" transmission={0.9} opacity={0.3} transparent roughness={0.1} side={THREE.DoubleSide} />
++          </Cone>
++          {/* Small stone in the middle */}
++          <Sphere position={[0, -0.06, 0]} args={[0.02, 16, 16]}>
++            <meshStandardMaterial color="#7f8c8d" />
++          </Sphere>
++        </group>
++      )}
++
++      {/* Floating Label */}
++      <Html transform position={[0, 0.4, 0]} scale={0.05}>
++        <div style={{ background: 'rgba(0,0,0,0.8)', color: 'white', padding: '6px 12px', borderRadius: '4px', whiteSpace: 'nowrap', pointerEvents: 'none', border: '1px solid #e74c3c', textAlign: 'center' }}>
++          <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '2px', color: '#f1c40f' }}>
++            Level 1: Solar Still
++          </div>
++          <div style={{ fontSize: '10px', color: '#ecf0f1' }}>
++            {stage === 0 ? "Empty. Click to add salty water." : 
++             stage === 1 ? "Salty water. Click to cover." : 
++             stage === 2 ? "Covered. Click to condense." : 
++             "Pure water collected! Click to reset."}
++          </div>
++        </div>
++      </Html>
++    </group>
++  )
++}
++
+ function ChemistryCorner({ position, rotation, onInfo }: any) {
+   
+   const [stirring, setStirring] = useState(false)
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not shown.
